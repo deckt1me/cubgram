@@ -1,0 +1,38 @@
+name: build
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: NDK
+        run: sdkmanager "ndk;27.2.12479018" "cmake;3.22.1"
+      - name: keystore
+        run: |
+          if [ ! -f TMessagesProj/config/release.keystore ]; then
+            mkdir -p TMessagesProj/config
+            keytool -genkeypair -keystore TMessagesProj/config/release.keystore \
+              -alias androidkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android -dname "CN=Cubgram"
+          fi
+      - name: build
+        run: |
+          chmod +x gradlew
+          ALL=$(./gradlew -q :TMessagesProj_App:tasks --all --no-daemon 2>/dev/null | grep -oE '^assemble[A-Za-z0-9_]*Release' | grep -v '^assembleRelease$')
+          TASK=$(echo "$ALL" | grep -i afat | head -1)
+          [ -z "$TASK" ] && TASK=$(echo "$ALL" | head -1)
+          echo "TASK=$TASK"
+          ./gradlew ":TMessagesProj_App:$TASK" --no-daemon -Dorg.gradle.parallel=false "-Dorg.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1g"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cubgram-apk
+          path: TMessagesProj_App/build/outputs/apk/**/*.apk
