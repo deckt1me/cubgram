@@ -24,13 +24,15 @@ jobs:
       - name: NDK
         run: sdkmanager "ndk;27.2.12479018" "cmake;3.22.1"
       - name: keystore
+        env:
+          KS_B64: ${{ secrets.KS_B64 }}
+          KS_PASS: ${{ secrets.KS_PASS }}
         run: |
-          if [ ! -f TMessagesProj/config/release.keystore ]; then
-            mkdir -p TMessagesProj/config
-            keytool -genkeypair -keystore TMessagesProj/config/release.keystore \
-              -alias androidkey -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass android -keypass android -dname "CN=Cubgram"
-          fi
+          [ -n "$KS_B64" ] && [ -n "$KS_PASS" ] || { echo "нет секретов KS_B64 / KS_PASS"; exit 1; }
+          mkdir -p TMessagesProj/config
+          echo "$KS_B64" | base64 -d > TMessagesProj/config/release.keystore
+          sed -i '/^RELEASE_/d' gradle.properties
+          printf 'RELEASE_KEY_ALIAS=cubgram\nRELEASE_KEY_PASSWORD=%s\nRELEASE_STORE_PASSWORD=%s\n' "$KS_PASS" "$KS_PASS" >> gradle.properties
       - name: build
         run: |
           chmod +x gradlew
@@ -39,6 +41,12 @@ jobs:
           [ -z "$TASK" ] && TASK=$(echo "$ALL" | head -1)
           echo "TASK=$TASK"
           ./gradlew ":TMessagesProj_App:$TASK" --no-daemon -Dorg.gradle.parallel=false "-Dorg.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1g"
+      - name: verify signature
+        run: |
+          APK=$(find TMessagesProj_App/build/outputs/apk -name '*.apk' | head -1)
+          AS=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$AS" verify --verbose --print-certs "$APK" | tee /tmp/v.txt
+          grep -q "CN=CubGram, O=CubGram" /tmp/v.txt || { echo "APK подписан не нашим ключом"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: cubgram-apk
